@@ -1,6 +1,6 @@
 /*! dustjs-linkedin - v2.7.2
 * http://dustjs.com/
-* Copyright (c) 2015 Aleksander Williams; Released under the MIT License */
+* Copyright (c) 2016 Aleksander Williams; Released under the MIT License */
 (function (root, factory) {
   if (typeof define === 'function' && define.amd && define.amd.dust === true) {
     define('dust.core', [], factory);
@@ -70,6 +70,9 @@
       type = type || INFO;
       if (loggingLevels[type] >= loggingLevels[dust.debugLevel]) {
         log('[DUST:' + type + ']', message);
+        if (type === ERROR && dust.debugLevel === DEBUG && message instanceof Error && message.stack) {
+          log('[DUST:' + type + ']', message.stack);
+        }
       }
     };
 
@@ -248,14 +251,23 @@
   };
 
   /**
-   * Decide somewhat-naively if something is a Thenable.
+   * Decide somewhat-naively if something is a Thenable.  Matches Promises A+ Spec, section 1.2 “thenable” is an object or function that defines a then method."
    * @param elem {*} object to inspect
    * @return {Boolean} is `elem` a Thenable?
    */
   dust.isThenable = function(elem) {
-    return elem &&
-           typeof elem === 'object' &&
+    return elem &&  /* Beware: `typeof null` is `object` */
+           (typeof elem === 'object' || typeof elem === 'function') &&
            typeof elem.then === 'function';
+  };
+
+  /**
+   * Decide if an element is a function but not Thenable; it is prefereable to resolve a thenable function by its `.then` method.
+   * @param elem {*} target of inspection
+   * @return {Boolean} is `elem` a function without a `.then` property?
+   */
+  dust.isNonThenableFunction = function(elem) {
+    return typeof elem === 'function' && !dust.isThenable(elem);
   };
 
   /**
@@ -339,6 +351,7 @@
 
   Context.wrap = function(context, name) {
     if (context instanceof Context) {
+      context.templateName = name;
       return context;
     }
     return new Context(context, {}, {}, null, name);
@@ -429,7 +442,7 @@
       }
     }
 
-    if (typeof ctx === 'function') {
+    if (dust.isNonThenableFunction(ctx)) {
       fn = function() {
         try {
           return ctx.apply(ctxThis, arguments);
@@ -746,7 +759,7 @@
   };
 
   Chunk.prototype.reference = function(elem, context, auto, filters) {
-    if (typeof elem === 'function') {
+    if (dust.isNonThenableFunction(elem)) {
       elem = elem.apply(context.current(), [this, context, null, {auto: auto, filters: filters}]);
       if (elem instanceof Chunk) {
         return elem;
@@ -771,7 +784,7 @@
         chunk = this,
         i, len, head;
 
-    if (typeof elem === 'function' && !dust.isTemplateFn(elem)) {
+    if (dust.isNonThenableFunction(elem) && !dust.isTemplateFn(elem)) {
       try {
         elem = elem.apply(context.current(), [this, context, bodies, params]);
       } catch(err) {
@@ -901,11 +914,9 @@
       // The eventual result of evaluating `elem` is a partial name
       // Load the partial after getting its name and end the async chunk
       return this.capture(elem, context, function(name, chunk) {
-        partialContext.templateName = name;
         load(name, chunk, partialContext).end();
       });
     } else {
-      partialContext.templateName = elem;
       return load(elem, this, partialContext);
     }
   };
@@ -1143,8 +1154,8 @@
 if (typeof define === "function" && define.amd && define.amd.dust === true) {
     define(["require", "dust.core"], function(require, dust) {
         dust.onLoad = function(name, cb) {
-            require([name], function() {
-                cb();
+            require([name], function(tmpl) {
+                cb(null, tmpl);
             });
         };
         return dust;
